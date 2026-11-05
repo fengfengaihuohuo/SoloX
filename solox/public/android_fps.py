@@ -58,26 +58,38 @@ class SurfaceStatsCollector(object):
                 self.fps_queue.task_done()
 
     def get_surfaceview(self):
-        activity_name = ''
-        activity_line = ''
+        dumpsys_result = ''
         try:
-            dumpsys_result = adb.shell(cmd='dumpsys SurfaceFlinger --list | {} {}'.format(d.filterType(), self.package_name), deviceId=self.device)
-            dumpsys_result_list = dumpsys_result.split('\n')
-            for line in dumpsys_result_list:
-                if line.startswith('SurfaceView') and line.find(self.package_name) != -1:
-                    activity_line = line.strip()
-                    return activity_line
+            dumpsys_result = adb.shell(
+                cmd='dumpsys SurfaceFlinger --list', deviceId=self.device)
+            layers = []
+            for raw_line in dumpsys_result.splitlines():
+                name = raw_line.strip()
+                # Newer Android versions wrap the actual layer name in state metadata.
+                if name.startswith('RequestedLayerState{'):
+                    name = name[len('RequestedLayerState{'):]
+                    name = name.split(' parentId=', 1)[0].rstrip('}')
+                if self.package_name in name:
+                    layers.append(name)
 
-            activity_name = dumpsys_result_list[len(dumpsys_result_list) - 1]
-            if not activity_name.__contains__(self.package_name):
-                logger.error('get activity name failed, Please provide SurfaceFlinger --list information to the author')
-                logger.info('dumpsys SurfaceFlinger --list info: {}'.format(dumpsys_result))
+            surfaces = [name for name in layers
+                        if 'SurfaceView' in name and 'Background for ' not in name]
+            # The BLAST buffer layer carries frame timestamps; its parent may not.
+            for name in surfaces:
+                if 'BLAST' in name:
+                    return name
+            if surfaces:
+                return surfaces[0]
+            if layers:
+                return layers[-1]
+            logger.error('get activity name failed, Please provide SurfaceFlinger --list information to the author')
+            logger.info('dumpsys SurfaceFlinger --list info: {}'.format(dumpsys_result))
         except Exception:
             traceback.print_exc()
             logger.error('get activity name failed, Please provide SurfaceFlinger --list information to the author')
             logger.info('dumpsys SurfaceFlinger --list info: {}'.format(dumpsys_result))
-        return activity_name            
-     
+        return ''
+
     def get_surfaceview_activity(self):
         activity_name = ''
         activity_line = ''
